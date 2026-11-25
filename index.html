@@ -371,6 +371,7 @@ details summary{cursor:pointer;font-size:16px;padding:4px 0}
 
   <form class="glass box adm-card" id="adm-login" hidden>
     <h3>Enter your admin password</h3>
+    <div id="em-wrap" hidden><label for="em-in">Admin email</label><input id="em-in" type="email" autocomplete="username"></div>
     <label for="pw-in">Password</label><input id="pw-in" type="password" autocomplete="current-password" required>
     <p class="errnote" id="login-err" role="alert"></p>
     <div class="btns"><button class="btn" type="submit">Unlock</button><a class="btn" href="#home">Cancel</a></div>
@@ -490,6 +491,12 @@ details summary{cursor:pointer;font-size:16px;padding:4px 0}
 
 <footer>Reach me at <a data-b="email" href="#"></a> · <span data-b="loc"></span> · © <span id="yr"></span> <span data-b="name"></span> · <a href="#admin">Admin</a></footer>
 
+<script>
+/* DATABASE SETTINGS: paste your Supabase project values between the quotes, then host this file anywhere.
+   Leave both empty to keep the browser-only mode. */
+window.PF_CONFIG={supabaseUrl:'https://uqhxwzazhjawbtgvnigq.supabase.co/rest/v1/',supabaseKey:'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVxaHh3emF6aGphd2J0Z3ZuaWdxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTU1OTc2NDQsImV4cCI6MjExMTE3MzY0NH0.lKuVsE8juCeXX3ozg01gNAvrJWikvduKpDrilR75yqc'};
+(function(){var h=location.hash;if(h.indexOf('access_token=')>-1&&h.indexOf('type=recovery')>-1){var p={};h.slice(1).split('&').forEach(function(x){var kv=x.split('=');p[kv[0]]=decodeURIComponent(kv[1]||'')});try{sessionStorage.setItem('pf:rec',JSON.stringify({access:p.access_token,refresh:p.refresh_token,exp:Date.now()+(+p.expires_in||3600)*1000-60000}))}catch(e){}history.replaceState(null,'',location.pathname+location.search+'#admin')}})();
+</script>
 <script>
 (function(){
   var root=document.documentElement;
@@ -697,6 +704,7 @@ details summary{cursor:pointer;font-size:16px;padding:4px 0}
     var n=$('#m-name').value.trim(),t=$('#m-text').value.trim();if(!n||!t)return;
     var fail=function(){toast('Messages cannot be sent from this view. Please copy my email address or use WhatsApp.')};
     if(!db||!uid||localMode){fail();return}
+    if(remoteMode){db.doc('messages/'+uid+'_'+Date.now()).set({items:[{name:n.slice(0,60),text:t.slice(0,1000),at:Date.now()}]}).then(function(){$('#m-text').value='';toast('Message sent')},fail);return}
     var ref=db.doc('messages/'+uid);
     ref.get().then(function(d){var items=((d.exists&&d.data().items)||[]).slice(-19);items.push({name:n.slice(0,60),text:t.slice(0,1000),at:Date.now()});return ref.set({items:items})})
       .then(function(){$('#m-text').value='';toast('Message sent')},fail)}
@@ -715,9 +723,61 @@ details summary{cursor:pointer;font-size:16px;padding:4px 0}
       b.onclick=function(){var ref=db.doc('messages/'+x.id);ref.get().then(function(d){var items=((d.data()||{}).items||[]).filter(function(m){return m.at!==x.m.at});return ref.set({items:items})})};
       row.appendChild(h);row.appendChild(p);row.appendChild(b);list.appendChild(row)})}
 
+  // Remote mode: Supabase database + image storage (used when PF_CONFIG is filled in)
+  var remoteMode=false,recovering=false,tok=null;
+  var SBU=String((window.PF_CONFIG||{}).supabaseUrl||'').replace(/\/+$/,''),SBK=String((window.PF_CONFIG||{}).supabaseKey||'');
+  function sbOn(){return !!(SBU&&SBK)}
+  function saveTok(t){tok=t;try{if(t)sessionStorage.setItem('pf:tok',JSON.stringify(t));else sessionStorage.removeItem('pf:tok')}catch(e){}}
+  function tokFrom(j){return{access:j.access_token,refresh:j.refresh_token,exp:Date.now()+(j.expires_in||3600)*1000-60000,uid:j.user&&j.user.id}}
+  function sbFetch(path,o){
+    o=o||{};
+    return Promise.resolve().then(function(){
+      if(tok&&Date.now()>tok.exp&&tok.refresh){
+        return fetch(SBU+'/auth/v1/token?grant_type=refresh_token',{method:'POST',headers:{apikey:SBK,'Content-Type':'application/json'},body:JSON.stringify({refresh_token:tok.refresh})})
+          .then(function(r){return r.ok?r.json():null}).then(function(j){saveTok(j&&j.access_token?tokFrom(j):null)})}
+    }).then(function(){
+      var h={apikey:SBK,Authorization:'Bearer '+(tok?tok.access:SBK)};
+      for(var k in (o.headers||{}))h[k]=o.headers[k];
+      return fetch(SBU+path,{method:o.method||'GET',headers:h,body:o.body}).then(function(r){
+        if(!r.ok)return r.text().then(function(t){throw new Error(t||String(r.status))});
+        return r.status===204?null:r.text().then(function(t){try{return JSON.parse(t)}catch(e){return null}})})})}
+  function remoteSet(){
+    remoteMode=true;
+    try{tok=JSON.parse(sessionStorage.getItem('pf:tok')||'null')}catch(e){tok=null}
+    try{var rec=JSON.parse(sessionStorage.getItem('pf:rec')||'null');sessionStorage.removeItem('pf:rec');if(rec&&rec.access){saveTok(rec);recovering=true}}catch(e){}
+    var JH={'Content-Type':'application/json'},subs={},loaders=[];
+    function snap(d){return{exists:d!==null,data:function(){return d}}}
+    function enc(x){return encodeURIComponent(x)}
+    function read(path){return sbFetch('/rest/v1/docs?path=eq.'+enc(path)+'&select=data').then(function(a){return snap(a&&a[0]?a[0].data:null)})}
+    function note(path){
+      (subs[path]||[]).forEach(function(cb){read(path).then(cb,function(){})});
+      if(path.indexOf('messages/')===0)loaders.forEach(function(f){f()})}
+    function ref(path){return{
+      get:function(){return read(path)},
+      set:function(v){
+        var anonMsg=!tok&&path.indexOf('messages/')===0;
+        return sbFetch('/rest/v1/docs',{method:'POST',headers:{'Content-Type':'application/json','Prefer':anonMsg?'return=minimal':'resolution=merge-duplicates,return=minimal'},body:JSON.stringify([{path:path,data:v}])}).then(function(){note(path)})},
+      update:function(v){return read(path).then(function(sn){var d=sn.data()||{};Object.keys(v).forEach(function(k){d[k]=v[k]});return ref(path).set(d)})},
+      delete:function(){return sbFetch('/rest/v1/docs?path=eq.'+enc(path),{method:'DELETE'}).then(function(){note(path)})},
+      onSnapshot:function(cb,err){(subs[path]=subs[path]||[]).push(cb);read(path).then(cb,function(){if(err)err()});return function(){}}}}
+    var rdb={doc:ref,collection:function(){return{onSnapshot:function(cb,err){
+      function load(){sbFetch('/rest/v1/docs?path=like.'+enc('messages/*')+'&select=path,data').then(function(rows){
+        cb({docs:(rows||[]).map(function(r){return{id:r.path.slice(9),data:function(){return r.data}}})})},function(){if(err)err()})}
+      loaders.push(load);load();return function(){}}}}};
+    var vid=null;try{vid=localStorage.getItem('pf:vid');if(!vid){var a=crypto.getRandomValues(new Uint8Array(8));vid='';for(var i=0;i<8;i++)vid+=('0'+a[i].toString(16)).slice(-2);localStorage.setItem('pf:vid',vid)}}catch(e){vid=vid||('v'+Date.now())}
+    var rus={isOwner:function(){return !!tok},id:function(){return (tok&&tok.uid)||vid}};
+    var ras={
+      upload:function(blob){
+        var a=crypto.getRandomValues(new Uint8Array(16)),id='';for(var i=0;i<16;i++)id+=('0'+a[i].toString(16)).slice(-2);
+        return sbFetch('/storage/v1/object/gallery/'+id,{method:'POST',headers:{'Content-Type':'image/jpeg'},body:blob}).then(function(){return{id:id,url:blobUrl(id)}})},
+      delete:function(id){return sbFetch('/storage/v1/object/gallery/'+id,{method:'DELETE'}).catch(function(){})}};
+    $('#em-wrap').hidden=false;$('#em-in').required=true;
+    var co=$('#cp-old');if(co){co.required=false;co.hidden=true;var cl=document.querySelector('label[for=cp-old]');if(cl)cl.hidden=true}
+    var h=$('#save-hint');if(h)h.textContent='Saved changes are stored in the database and show for every visitor straight away.';
+    return [rdb,rus,ras]}
   // Local mode: used when the site runs outside its hosting service. Password, edits and photos are kept in this browser.
   var localMode=false;
-  function blobUrl(id){try{var d=localStorage.getItem('pfa:'+id);if(d)return d}catch(e){}return '/_blob/'+id}
+  function blobUrl(id){if(remoteMode)return SBU+'/storage/v1/object/public/gallery/'+id;try{var d=localStorage.getItem('pfa:'+id);if(d)return d}catch(e){}return '/_blob/'+id}
   function localSet(){
     localMode=true;
     var K='pf:',subs={};
@@ -741,7 +801,7 @@ details summary{cursor:pointer;font-size:16px;padding:4px 0}
     var h=$('#save-hint');if(h)h.textContent='Changes are saved in this browser only. To change the site for everyone, republish it with your updates.';
     return [ldb,lus,las]}
   function initDb(){
-    var pr=(window.claude&&claude.use)
+    var pr=sbOn()?Promise.resolve(remoteSet()):(window.claude&&claude.use)
       ?Promise.all([claude.use('db'),claude.use('user'),claude.use('assets')]).then(function(r){return r[0]?r:localSet()},function(){return localSet()})
       :Promise.resolve(localSet());
     pr.then(function(r){
@@ -755,7 +815,7 @@ details summary{cursor:pointer;font-size:16px;padding:4px 0}
           db.collection('messages').onSnapshot(renderInbox,function(){});
         }
       });
-    }).catch(function(){}).then(function(){dbReady=true;renderAdmin()});
+    }).catch(function(){}).then(function(){dbReady=true;if(recovering&&isOwner){unlock();var cd=$('#cp-details');if(cd)cd.open=true;toast('Choose a new password below')}else renderAdmin()});
   }
 
   // ---------- admin: password ----------
@@ -779,6 +839,7 @@ details summary{cursor:pointer;font-size:16px;padding:4px 0}
   function denied(msg){$('#denied-msg').textContent=msg;showAdm('denied')}
   function renderAdmin(){
     if(!dbReady)return showAdm('loading');
+    if(remoteMode)return showAdm(unlocked?'editor':'login');
     if(!db||!isOwner)return showAdm('login');
     if(authErr)return denied('The admin settings could not be read. Reload the page and try again.');
     if(unlocked)return showAdm('editor');
@@ -802,6 +863,13 @@ details summary{cursor:pointer;font-size:16px;padding:4px 0}
 
   $('#adm-login').onsubmit=function(e){e.preventDefault();
     var err=$('#login-err');err.textContent='';
+    if(remoteMode){
+      var em=$('#em-in').value.trim();if(!em){err.textContent='Enter your admin email.';return}
+      fetch(SBU+'/auth/v1/token?grant_type=password',{method:'POST',headers:{apikey:SBK,'Content-Type':'application/json'},body:JSON.stringify({email:em,password:$('#pw-in').value})})
+        .then(function(r){return r.ok?r.json():Promise.reject()})
+        .then(function(j){saveTok(tokFrom(j));isOwner=true;$('#pw-in').value='';db.collection('messages').onSnapshot(renderInbox,function(){});unlock()},
+          function(){err.textContent='That email or password is not right.'});
+      return}
     if(!db){err.textContent=NOCONN;return}
     var now=Date.now();if(now<lockUntil){err.textContent='Too many attempts. Try again in '+Math.ceil((lockUntil-now)/1000)+' seconds.';return}
     verify($('#pw-in').value).then(function(ok){
@@ -831,7 +899,14 @@ details summary{cursor:pointer;font-size:16px;padding:4px 0}
       $('#rs-mail').href=url;rsStep(2);$('#rs-code').focus();
       var l=document.createElement('a');l.href=url;l.target='_blank';l.rel='noopener';document.body.appendChild(l);l.click();l.remove();
     }).catch(function(){err.textContent='The code could not be created. Try again.'})}
-  $('#forgot').onclick=function(){if(!db||!isOwner){$('#login-err').textContent=db?'Password reset is not available from this device.':NOCONN;return}resetting=true;$('#rs-code').value='';rsStep(1);renderAdmin()};
+  $('#forgot').onclick=function(){
+    if(remoteMode){
+      var em=$('#em-in').value.trim(),er=$('#login-err');
+      if(!em){er.textContent='Type your admin email above, then tap Forgot password.';return}
+      fetch(SBU+'/auth/v1/recover',{method:'POST',headers:{apikey:SBK,'Content-Type':'application/json'},body:JSON.stringify({email:em})})
+        .then(function(){er.textContent='If that email has an admin account, a reset link is on its way. Open it on this device.'},function(){er.textContent='The reset email could not be sent. Try again.'});
+      return}
+    if(!db||!isOwner){$('#login-err').textContent=db?'Password reset is not available from this device.':NOCONN;return}resetting=true;$('#rs-code').value='';rsStep(1);renderAdmin()};
   $('#rs-send-wa').onclick=function(){sendCode('wa')};
   $('#rs-resend').onclick=function(){$('#rs-code').value='';rsStep(1);sendCode(rsChan)};
   $('#rs-cancel').onclick=rsClose;$('#rs-cancel2').onclick=rsClose;
@@ -857,6 +932,10 @@ details summary{cursor:pointer;font-size:16px;padding:4px 0}
     var o=$('#cp-old').value,a=$('#cp-new').value,b=$('#cp-confirm').value;
     if(a.length<8){err.textContent='Use at least 8 characters.';return}
     if(a!==b){err.textContent='The two new passwords do not match.';return}
+    if(remoteMode){
+      sbFetch('/auth/v1/user',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:a})})
+        .then(function(){['cp-new','cp-confirm'].forEach(function(i){$('#'+i).value=''});$('#cp-details').open=false;toast('Password changed')},function(){err.textContent='The password could not be changed. Try again.'});
+      return}
     verify(o).then(function(ok){
       if(!ok){err.textContent='The current password is not right.';return}
       return savePassword(a).then(function(){['cp-old','cp-new','cp-confirm'].forEach(function(i){$('#'+i).value=''});$('#cp-details').open=false;toast('Password changed')})
