@@ -395,7 +395,7 @@ details summary{cursor:pointer;font-size:16px;padding:4px 0}
   <div id="adm-editor" hidden>
     <div class="glass box">
       <h3>How saving works</h3>
-      <p class="hint">Saved changes show for signed-in viewers straight away and stay until you change them. Visitors who are not signed in see the last published version of the site, so ask Claude to publish your latest edits when you want them to see the changes.</p>
+      <p class="hint">Saved changes show for signed-in viewers straight away and stay until you change them. Visitors who are not signed in see the last published version of the site.</p>
     </div>
     <form id="ed-form" novalidate>
       <div class="glass box">
@@ -739,7 +739,7 @@ details summary{cursor:pointer;font-size:16px;padding:4px 0}
       return crypto.subtle.importKey('raw',new TextEncoder().encode(pw),'PBKDF2',false,['deriveBits']).then(function(k){
         return crypto.subtle.deriveBits({name:'PBKDF2',salt:salt,iterations:iter,hash:'SHA-256'},k,256)})})}
   function same(a,b){if(a.length!==b.length)return false;var d=0;for(var i=0;i<a.length;i++)d|=a[i]^b[i];return d===0}
-  function verify(pw){return derive(pw,unb64(authDoc.salt),authDoc.iter).then(function(bits){return same(new Uint8Array(bits),unb64(authDoc.hash))})}
+  function verify(pw){if(!authDoc||!authDoc.hash)return Promise.resolve(false);return derive(pw,unb64(authDoc.salt),authDoc.iter).then(function(bits){return same(new Uint8Array(bits),unb64(authDoc.hash))})}
   function savePassword(pw){
     return Promise.resolve().then(function(){
       var salt=crypto.getRandomValues(new Uint8Array(16)),iter=150000;
@@ -751,8 +751,7 @@ details summary{cursor:pointer;font-size:16px;padding:4px 0}
   function denied(msg){$('#denied-msg').textContent=msg;showAdm('denied')}
   function renderAdmin(){
     if(!dbReady)return showAdm('loading');
-    if(!db)return denied('This view cannot reach the site database. Open the published page while signed in to Claude as the owner.');
-    if(!isOwner)return denied('Only the site owner can open the admin page. Sign in to Claude with the owner account and open this page again.');
+    if(!db||!isOwner)return showAdm('login');
     if(authErr)return denied('The admin settings could not be read. Reload the page and try again.');
     if(unlocked)return showAdm('editor');
     if(authDoc===undefined)return showAdm('loading');
@@ -794,7 +793,7 @@ details summary{cursor:pointer;font-size:16px;padding:4px 0}
     var err=$('#reset-err');err.textContent='';
     var num=String(P.whatsapp||'').replace(/\D/g,'');
     if(rsChan==='wa'&&!num){err.textContent='No WhatsApp number is saved on the site. Add one in the admin editor first.';return}
-    if(!isOwner||!db){err.textContent='Only the signed-in site owner can reset the password.';return}
+    if(!isOwner||!db){err.textContent='Password reset is not available from this device.';return}
     rsCode=genCode();var code=rsCode,salt=crypto.getRandomValues(new Uint8Array(16)),iter=100000;
     derive(code,salt,iter).then(function(bits){
       return db.doc('admin/reset').set({salt:b64(salt),hash:b64(bits),iter:iter,exp:Date.now()+900000,tries:0})}).then(function(){
@@ -811,7 +810,7 @@ details summary{cursor:pointer;font-size:16px;padding:4px 0}
     var err=$('#reset-err2');err.textContent='';
     var code=$('#rs-code').value.trim();
     if(!/^[0-9]{8}$/.test(code)){err.textContent='Enter the 8-digit code from the email.';return}
-    if(!isOwner||!db){err.textContent='Only the signed-in site owner can reset the password.';return}
+    if(!isOwner||!db){err.textContent='Password reset is not available from this device.';return}
     var ref=db.doc('admin/reset');
     ref.get().then(function(d){
       var r=d.exists&&d.data();
