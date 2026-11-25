@@ -395,7 +395,7 @@ details summary{cursor:pointer;font-size:16px;padding:4px 0}
   <div id="adm-editor" hidden>
     <div class="glass box">
       <h3>How saving works</h3>
-      <p class="hint">Saved changes show for signed-in viewers straight away and stay until you change them. Visitors who are not signed in see the last published version of the site.</p>
+      <p class="hint" id="save-hint">Saved changes show for signed-in viewers straight away and stay until you change them. Visitors who are not signed in see the last published version of the site.</p>
     </div>
     <form id="ed-form" novalidate>
       <div class="glass box">
@@ -600,7 +600,7 @@ details summary{cursor:pointer;font-size:16px;padding:4px 0}
     P.gallery.forEach(function(it,i){
       var b=el('button','shot');b.type='button';
       b.setAttribute('aria-label','Open photo '+(i+1)+(it.caption?': '+it.caption:''));
-      var im=el('img');im.src='/_blob/'+it.id;im.alt=it.caption||'Photo '+(i+1);im.loading='lazy';
+      var im=el('img');im.src=blobUrl(it.id);im.alt=it.caption||'Photo '+(i+1);im.loading='lazy';
       im.onerror=function(){b.hidden=true};
       b.appendChild(im);if(it.caption)b.appendChild(el('span','cap',it.caption));
       b.onclick=function(){lbOpen(i,b)};gl.appendChild(b)});
@@ -620,7 +620,7 @@ details summary{cursor:pointer;font-size:16px;padding:4px 0}
   function lbShow(i){
     var list=P.gallery;if(!list.length){lbClose();return}
     lbIdx=(i+list.length)%list.length;var it=list[lbIdx];
-    $('#lb-img').src='/_blob/'+it.id;$('#lb-img').alt=it.caption||'Photo '+(lbIdx+1);
+    $('#lb-img').src=blobUrl(it.id);$('#lb-img').alt=it.caption||'Photo '+(lbIdx+1);
     $('#lb-cap').textContent=it.caption||'';$('#lb-count').textContent=(lbIdx+1)+' of '+list.length;
     $('#lb-prev').hidden=$('#lb-next').hidden=list.length<2;
   }
@@ -696,7 +696,7 @@ details summary{cursor:pointer;font-size:16px;padding:4px 0}
   function sendMsg(){
     var n=$('#m-name').value.trim(),t=$('#m-text').value.trim();if(!n||!t)return;
     var fail=function(){toast('Messages cannot be sent from this view. Please copy my email address or use WhatsApp.')};
-    if(!db||!uid){fail();return}
+    if(!db||!uid||localMode){fail();return}
     var ref=db.doc('messages/'+uid);
     ref.get().then(function(d){var items=((d.exists&&d.data().items)||[]).slice(-19);items.push({name:n.slice(0,60),text:t.slice(0,1000),at:Date.now()});return ref.set({items:items})})
       .then(function(){$('#m-text').value='';toast('Message sent')},fail)}
@@ -715,9 +715,36 @@ details summary{cursor:pointer;font-size:16px;padding:4px 0}
       b.onclick=function(){var ref=db.doc('messages/'+x.id);ref.get().then(function(d){var items=((d.data()||{}).items||[]).filter(function(m){return m.at!==x.m.at});return ref.set({items:items})})};
       row.appendChild(h);row.appendChild(p);row.appendChild(b);list.appendChild(row)})}
 
+  // Local mode: used when the site runs outside its hosting service. Password, edits and photos are kept in this browser.
+  var localMode=false;
+  function blobUrl(id){try{var d=localStorage.getItem('pfa:'+id);if(d)return d}catch(e){}return '/_blob/'+id}
+  function localSet(){
+    localMode=true;
+    var K='pf:',subs={};
+    function rd(k){try{var v=localStorage.getItem(K+k);return v?JSON.parse(v):null}catch(e){return null}}
+    function snap(d){return{exists:d!==null,data:function(){return d}}}
+    function note(path){(subs[path]||[]).forEach(function(cb){cb(snap(rd(path)))})}
+    function ref(path){return{
+      get:function(){return Promise.resolve().then(function(){return snap(rd(path))})},
+      set:function(v){return Promise.resolve().then(function(){localStorage.setItem(K+path,JSON.stringify(v));note(path)})},
+      update:function(v){return Promise.resolve().then(function(){var d=rd(path)||{};Object.keys(v).forEach(function(k){d[k]=v[k]});localStorage.setItem(K+path,JSON.stringify(d));note(path)})},
+      delete:function(){return Promise.resolve().then(function(){localStorage.removeItem(K+path);note(path)})},
+      onSnapshot:function(cb){(subs[path]=subs[path]||[]).push(cb);setTimeout(function(){cb(snap(rd(path)))},0);return function(){}}}}
+    var ldb={doc:ref,collection:function(){return{onSnapshot:function(cb){setTimeout(function(){cb({docs:[]})},0);return function(){}}}}};
+    var lus={isOwner:function(){return true},id:function(){return 'local'}};
+    var las={
+      upload:function(blob){return new Promise(function(res,rej){var fr=new FileReader();fr.onload=function(){
+        var a=crypto.getRandomValues(new Uint8Array(16)),id='';for(var i=0;i<16;i++)id+=('0'+a[i].toString(16)).slice(-2);
+        try{localStorage.setItem('pfa:'+id,fr.result)}catch(e){rej(new Error('Browser storage is full. Remove a photo and try again.'));return}
+        res({id:id,url:fr.result})};fr.onerror=function(){rej(new Error('read'))};fr.readAsDataURL(blob)})},
+      delete:function(id){try{localStorage.removeItem('pfa:'+id)}catch(e){}return Promise.resolve()}};
+    var h=$('#save-hint');if(h)h.textContent='Changes are saved in this browser only. To change the site for everyone, republish it with your updates.';
+    return [ldb,lus,las]}
   function initDb(){
-    if(!(window.claude&&claude.use)){dbReady=true;renderAdmin();return}
-    Promise.all([claude.use('db'),claude.use('user'),claude.use('assets')]).then(function(r){
+    var pr=(window.claude&&claude.use)
+      ?Promise.all([claude.use('db'),claude.use('user'),claude.use('assets')]).then(function(r){return r[0]?r:localSet()},function(){return localSet()})
+      :Promise.resolve(localSet());
+    pr.then(function(r){
       db=r[0];user=r[1];assets=r[2];
       if(!db)return;
       return Promise.resolve(user&&user.isOwner()).then(function(o){isOwner=!!o;return user&&user.id()}).then(function(id){
@@ -890,7 +917,7 @@ details summary{cursor:pointer;font-size:16px;padding:4px 0}
       head.appendChild(el('strong',null,'Photo '+(i+1)));
       head.appendChild(itemTools(D.gallery,i,function(gone){if(gone&&gone.id)removedIds.push(gone.id)}));
       box.appendChild(head);
-      var row=el('div','ed-gal-row'),im=el('img');im.src='/_blob/'+g.id;im.alt='';im.loading='lazy';
+      var row=el('div','ed-gal-row'),im=el('img');im.src=blobUrl(g.id);im.alt='';im.loading='lazy';
       var col=el('div'),id='gc'+(++seq),lab=el('label',null,'Label (shown on the photo so visitors can identify it)');lab.htmlFor=id;
       var inp=el('input');inp.id=id;inp.maxLength=140;inp.value=g.caption||'';
       inp.addEventListener('input',function(){g.caption=inp.value;setDirty(true)});
@@ -931,7 +958,7 @@ details summary{cursor:pointer;font-size:16px;padding:4px 0}
     (function next(){
       if(i>=files.length){st.textContent=(ok?ok+(ok===1?' photo added. ':' photos added. ')+'Press Save changes to publish '+(ok===1?'it. ':'them. '):'')+firstErr;return}
       st.textContent='Uploading '+(i+1)+' of '+files.length+'…';
-      resize(files[i],1600).then(function(b){return assets.upload(b,{type:'image/jpeg'})}).then(function(r){
+      resize(files[i],localMode?900:1600).then(function(b){return assets.upload(b,{type:'image/jpeg'})}).then(function(r){
         D.gallery.push({id:r.id,caption:''});ok++;setDirty(true);drawLists()
       }).catch(function(err){if(!firstErr)firstErr=uploadMsg(err)}).then(function(){i++;next()})
     })()};
