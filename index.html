@@ -1,5 +1,5 @@
 <!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
-<title>Aaron Darren</title>
+<title>Diaz — Portfolio</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;1,400&family=Jost:wght@300;400;500&display=swap" rel="stylesheet">
@@ -747,6 +747,7 @@ details summary{cursor:pointer;font-size:16px;padding:4px 0}
         var rec={salt:b64(salt),hash:b64(bits),iter:iter,updatedAt:Date.now()};
         return db.doc('admin/auth').set(rec).then(function(){authDoc=rec})})})}
 
+  var NOCONN="Admin can't reach its saved settings from this view, so the password can't be checked or reset here. Open the site from the link you published, signed in to your account, then try again.";
   function showAdm(k){['loading','denied','setup','reset','login','editor'].forEach(function(n){$('#adm-'+n).hidden=n!==k})}
   function denied(msg){$('#denied-msg').textContent=msg;showAdm('denied')}
   function renderAdmin(){
@@ -774,6 +775,7 @@ details summary{cursor:pointer;font-size:16px;padding:4px 0}
 
   $('#adm-login').onsubmit=function(e){e.preventDefault();
     var err=$('#login-err');err.textContent='';
+    if(!db){err.textContent=NOCONN;return}
     var now=Date.now();if(now<lockUntil){err.textContent='Too many attempts. Try again in '+Math.ceil((lockUntil-now)/1000)+' seconds.';return}
     verify($('#pw-in').value).then(function(ok){
       if(ok){$('#pw-in').value='';unlock()}
@@ -802,7 +804,7 @@ details summary{cursor:pointer;font-size:16px;padding:4px 0}
       $('#rs-mail').href=url;rsStep(2);$('#rs-code').focus();
       var l=document.createElement('a');l.href=url;l.target='_blank';l.rel='noopener';document.body.appendChild(l);l.click();l.remove();
     }).catch(function(){err.textContent='The code could not be created. Try again.'})}
-  $('#forgot').onclick=function(){resetting=true;$('#rs-code').value='';rsStep(1);renderAdmin()};
+  $('#forgot').onclick=function(){if(!db||!isOwner){$('#login-err').textContent=db?'Password reset is not available from this device.':NOCONN;return}resetting=true;$('#rs-code').value='';rsStep(1);renderAdmin()};
   $('#rs-send-wa').onclick=function(){sendCode('wa')};
   $('#rs-resend').onclick=function(){$('#rs-code').value='';rsStep(1);sendCode(rsChan)};
   $('#rs-cancel').onclick=rsClose;$('#rs-cancel2').onclick=rsClose;
